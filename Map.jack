@@ -1,0 +1,157 @@
+// Owner: Member A
+// Tile grid: 32 x 15 tiles, each 16x16 pixels (rows 0-14 = y 0..239).
+// The bottom text row (Output row 22) is kept free for the HUD.
+// Tile values: 0 = floor, 1 = wall, 2 = shadow (hides player), 3 = key, 4 = exit
+//
+// Tile art (screen is black and white only, so shapes must differ):
+//   wall   = solid black block
+//   shadow = checkerboard of small dots
+//   key    = ring with a stem and two teeth
+//   exit   = doorway with a knob
+class Map {
+    field Array tiles;
+    field int width, height;
+
+    constructor Map new() {
+        let width = 32;
+        let height = 15;
+        let tiles = Array.new(width * height);
+        do clear();
+        return this;
+    }
+
+    method void clear() {
+        var int i;
+        let i = 0;
+        while (i < (width * height)) {
+            let tiles[i] = 0;
+            let i = i + 1;
+        }
+        return;
+    }
+
+    method int getWidth() { return width; }
+    method int getHeight() { return height; }
+
+    method void setTile(int x, int y, int value) {
+        if ((x < 0) | (y < 0) | (x > (width - 1)) | (y > (height - 1))) {
+            return;
+        }
+        let tiles[(y * width) + x] = value;
+        return;
+    }
+
+    // Anything outside the grid counts as a wall.
+    method int getTile(int x, int y) {
+        if ((x < 0) | (y < 0) | (x > (width - 1)) | (y > (height - 1))) {
+            return 1;
+        }
+        return tiles[(y * width) + x];
+    }
+
+    method boolean isWall(int x, int y) {
+        return (getTile(x, y) = 1);
+    }
+
+    method boolean blocksSight(int x, int y) {
+        return (getTile(x, y) = 1);
+    }
+
+    method boolean isShadow(int x, int y) {
+        return (getTile(x, y) = 2);
+    }
+
+    // Draws the non-wall tile art (shadow, key, exit). Floor draws nothing.
+    method void drawSpecial(int x, int y, int t) {
+        var int px, py, r, c;
+        let px = x * 16;
+        let py = y * 16;
+        do Screen.setColor(true);
+
+        if (t = 2) {
+            // shadow: checkerboard of 2x2 dots
+            let r = 0;
+            while (r < 4) {
+                let c = 0;
+                while (c < 4) {
+                    if (((r + c) & 1) = 0) {
+                        do Screen.drawRectangle(px + 1 + (c * 4), py + 1 + (r * 4), px + 2 + (c * 4), py + 2 + (r * 4));
+                    }
+                    let c = c + 1;
+                }
+                let r = r + 1;
+            }
+        }
+
+        if (t = 3) {
+            // key: ring on the left, stem, two teeth
+            do Screen.drawCircle(px + 5, py + 8, 3);
+            do Screen.drawRectangle(px + 8, py + 7, px + 13, py + 8);
+            do Screen.drawRectangle(px + 11, py + 9, px + 12, py + 11);
+            do Screen.drawRectangle(px + 13, py + 9, px + 13, py + 10);
+            do Screen.setColor(false);
+            do Screen.drawCircle(px + 5, py + 8, 1);
+            do Screen.setColor(true);
+        }
+
+        if (t = 4) {
+            // exit: open doorway with a knob
+            do Screen.drawRectangle(px + 3, py + 1, px + 12, py + 14);
+            do Screen.setColor(false);
+            do Screen.drawRectangle(px + 5, py + 3, px + 10, py + 14);
+            do Screen.setColor(true);
+            do Screen.drawRectangle(px + 8, py + 8, px + 9, py + 9);
+        }
+        return;
+    }
+
+    // Redraws one tile (use it after a key is picked up, or after an entity
+    // erases itself on top of a shadow / key / exit tile).
+    method void drawTile(int x, int y) {
+        var int t;
+        if ((x < 0) | (y < 0) | (x > (width - 1)) | (y > (height - 1))) {
+            return;
+        }
+        let t = getTile(x, y);
+        do Screen.setColor(false);
+        do Screen.drawRectangle(x * 16, y * 16, (x * 16) + 15, (y * 16) + 15);
+        do Screen.setColor(true);
+        if (t = 1) {
+            do Screen.drawRectangle(x * 16, y * 16, (x * 16) + 15, (y * 16) + 15);
+        } else {
+            do drawSpecial(x, y, t);
+        }
+        return;
+    }
+
+    // Draws the whole map. Horizontal runs of wall tiles are merged into one
+    // rectangle, which is much faster than drawing tile by tile.
+    method void draw() {
+        var int x, y, x0;
+        let y = 0;
+        while (y < height) {
+            let x = 0;
+            while (x < width) {
+                if (getTile(x, y) = 1) {
+                    let x0 = x;
+                    while ((x < width) & (getTile(x, y) = 1)) {
+                        let x = x + 1;
+                    }
+                    do Screen.setColor(true);
+                    do Screen.drawRectangle(x0 * 16, y * 16, (x * 16) - 1, (y * 16) + 15);
+                } else {
+                    do drawSpecial(x, y, getTile(x, y));
+                    let x = x + 1;
+                }
+            }
+            let y = y + 1;
+        }
+        return;
+    }
+
+    method void dispose() {
+        do tiles.dispose();
+        do Memory.deAlloc(this);
+        return;
+    }
+}
