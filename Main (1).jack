@@ -1,0 +1,40 @@
+/**
+ * Shadow Grid entry point.
+ * Shows the controls, waits for a key, then starts the game session.
+ */
+class Main {
+    function void main() {
+        var Game game;
+
+        do Main.showTitle();
+        do Keyboard.readChar();
+
+        let game = Game.new();
+        do game.run();
+        do game.dispose();
+        return;
+    }
+
+    function void showTitle() {
+        do Screen.clearScreen();
+
+        do Output.moveCursor(4, 20);
+        do Output.printString("SHADOW GRID");
+
+        do Output.moveCursor(7, 8);
+        do Output.printString("Sneak through four levels and reach each exit.");
+
+        do Output.moveCursor(10, 8);
+        do Output.printString("ARROWS: move     S: toggle sneak     D: throw decoy");
+
+        do Output.moveCursor(12, 8);
+        do Output.printString("Find the key and exit. Avoid guards and cameras.");
+
+        do Output.moveCursor(15, 8);
+        do Output.printString("Three lives. Three visible ticks get you caught.");
+
+        do Output.moveCursor(19, 20);
+        do Output.printString("Press any key to start");
+        return;
+    }
+}
