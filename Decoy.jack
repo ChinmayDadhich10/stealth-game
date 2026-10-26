@@ -1,0 +1,75 @@
+/**
+ * Decoy (Member B).
+ * Thrown to a tile; stays active for a few ticks, then expires.
+ * Game (Member D) creates ONE Decoy per game in its constructor and reuses it
+ * (never create objects inside the game loop).
+ *
+ * Each tick Game should:
+ *   decoy.update();
+ *   if (decoy.isActive()) { for each guard: guard.hear(decoy.getX(), decoy.getY()); }
+ *   decoy.erase() before update when it was active, decoy.draw() after.
+ * erase() works even after the decoy has expired, so Game can clear it.
+ */
+class Decoy {
+    field int x, y;
+    field int timer;
+    field boolean active;
+
+    constructor Decoy new() {
+        let x = 0;
+        let y = 0;
+        let timer = 0;
+        let active = false;
+        return this;
+    }
+
+    /** Lands at tile (tx, ty) and stays active for 6 ticks. */
+    method void throwTo(int tx, int ty) {
+        let x = tx;
+        let y = ty;
+        let timer = 6;
+        let active = true;
+        return;
+    }
+
+    method boolean isActive() { return active; }
+    method int getX() { return x; }
+    method int getY() { return y; }
+
+    /** Counts down once per tick; deactivates when the timer reaches 0. */
+    method void update() {
+        if (active) {
+            let timer = timer - 1;
+            if (timer = 0) {
+                let active = false;
+            }
+        }
+        return;
+    }
+
+    method void draw() {
+        var int px, py;
+        if (active) {
+            let px = Math.multiply(x, 16);
+            let py = Math.multiply(y, 16);
+            do Screen.setColor(true);
+            do Screen.drawCircle(px + 8, py + 8, 5);
+            do Screen.fillCircle(px + 8, py + 8, 2);
+        }
+        return;
+    }
+
+    method void erase() {
+        var int px, py;
+        let px = Math.multiply(x, 16);
+        let py = Math.multiply(y, 16);
+        do Screen.setColor(false);
+        do Screen.fillRectangle(px, py, px + 15, py + 15);
+        return;
+    }
+
+    method void dispose() {
+        do Memory.deAlloc(this);
+        return;
+    }
+}
