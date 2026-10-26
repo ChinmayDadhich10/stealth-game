@@ -1,0 +1,733 @@
+/**
+ * Owns the main game loop and coordinates Map, Player, Guard, Camera,
+ * Decoy, LevelData, and HUD. The public methods follow the team contract.
+ */
+class Game {
+    field Map map;
+    field Player player;
+    field Array guards;
+    field Array cameras;
+    field Array cameraCells;
+    field Decoy decoy;
+    field HUD hud;
+
+    field int level;
+    field int score;
+    field int alert;
+    field int timer;
+    field int guardTotal;
+    field int cameraTotal;
+    field int lastDir;
+
+    field boolean running;
+    field boolean detectedThisLevel;
+    field boolean won;
+    field boolean gameOver;
+
+    constructor Game new() {
+        let map = Map.new();
+        let player = null;
+        let guards = null;
+        let cameras = null;
+        let cameraCells = null;
+        let decoy = null;
+        let hud = HUD.new();
+
+        let level = 1;
+        let score = 0;
+        let alert = 0;
+        let timer = 0;
+        let guardTotal = 0;
+        let cameraTotal = 0;
+        let lastDir = 1;
+
+        let running = true;
+        let detectedThisLevel = false;
+        let won = false;
+        let gameOver = false;
+
+        do loadLevel(1);
+        return this;
+    }
+
+    /** Load a level while preserving the current number of lives and score. */
+    method void loadLevel(int lv) {
+        var int oldLives;
+        var int i;
+        var int cell;
+        var int gx;
+        var int gy;
+        var int wx;
+        var int wy;
+        var Guard guard;
+        var Camera cam;
+
+        let oldLives = 3;
+        if (~(player = null)) {
+            let oldLives = player.getLives();
+        }
+
+        do clearActors();
+        do map.clear();
+        do LevelData.load(lv, map);
+
+        let level = lv;
+        let alert = 0;
+        let detectedThisLevel = false;
+        let lastDir = 1;
+        if (level = 4) {
+            let timer = 600;
+        } else {
+            let timer = 0;
+        }
+
+        let player = Player.new(LevelData.playerStartX(level), LevelData.playerStartY(level));
+        while (player.getLives() > oldLives) {
+            do player.loseLife();
+        }
+
+        if (~(decoy = null)) {
+            do decoy.dispose();
+        }
+        let decoy = Decoy.new();
+
+        // LevelData exposes guard counts but not spawn coordinates. Pick
+        // distinct, open floor cells so this class works with every layout.
+        let guardTotal = LevelData.guardCount(level);
+        if (guardTotal > 0) {
+            let guards = Array.new(guardTotal);
+            let i = 0;
+            while (i < guardTotal) {
+                let cell = findGuardCell(i);
+                let gx = cell - Math.multiply(Math.divide(cell, map.getWidth()), map.getWidth());
+                let gy = Math.divide(cell, map.getWidth());
+                let guard = Guard.new(gx, gy, 2);
+                let guards[i] = guard;
+
+                do guard.setWaypoint(0, gx, gy);
+                let cell = findWaypointCell(gx, gy);
+                let wx = cell - Math.multiply(Math.divide(cell, map.getWidth()), map.getWidth());
+                let wy = Math.divide(cell, map.getWidth());
+                do guard.setWaypoint(1, wx, wy);
+                let i = i + 1;
+            }
+        } else {
+            let guards = null;
+        }
+
+        // The interface has no cameraCount method, so use the level plan
+        // from the brief: one camera on level 2 and two on level 4.
+        let cameraTotal = 0;
+        if (level = 2) {
+            let cameraTotal = 1;
+        } else {
+            if (level = 4) {
+                let cameraTotal = 3;
+            }
+        }
+
+        if (cameraTotal > 0) {
+            let cameras = Array.new(cameraTotal);
+            let cameraCells = Array.new(cameraTotal);
+            let i = 0;
+            while (i < cameraTotal) {
+                let cell = findCameraCell(i);
+                let gx = cell - Math.multiply(Math.divide(cell, map.getWidth()), map.getWidth());
+                let gy = Math.divide(cell, map.getWidth());
+                if (level = 2) {
+                    let cam = Camera.new(gx, gy, 1, 3);
+                } else {
+                    if (i = 0) {
+                        let cam = Camera.new(gx, gy, 0, 2);
+                    } else {
+                        if (i = 1) {
+                            let cam = Camera.new(gx, gy, 1, 3);
+                        } else {
+                            let cam = Camera.new(gx, gy, 0, 1);
+                        }
+                    }
+                }
+                let cameras[i] = cam;
+                let cameraCells[i] = cell;
+                let i = i + 1;
+            }
+        } else {
+            let cameras = null;
+            let cameraCells = null;
+        }
+
+        do hud.setTimer(timer, (level = 4));
+        do hud.showMessage("Collect the key, then reach the exit.");
+        return;
+    }
+
+    /** Process one game tick. A key value of zero means no key is pressed. */
+    method void update(int key) {
+        var int px;
+        var int py;
+        var int noise;
+        var int i;
+        var int dx;
+        var int dy;
+        var int gx;
+        var int gy;
+        var int distance;
+        var boolean hidden;
+        var boolean seen;
+        var Guard guard;
+        var Camera cam;
+
+        if (won | gameOver) {
+            return;
+        }
+
+        // Remember the last movement direction for decoy throws.
+        if (key = 130) {
+            let lastDir = 3;
+        }
+        if (key = 131) {
+            let lastDir = 0;
+        }
+        if (key = 132) {
+            let lastDir = 1;
+        }
+        if (key = 133) {
+            let lastDir = 2;
+        }
+
+        do player.update(key, map);
+
+        if ((key = 68) & (~decoy.isActive())) {
+            do throwDecoy();
+        }
+        do decoy.update();
+
+        let px = player.getX();
+        let py = player.getY();
+
+        // Pick up the key here as a safety net for the Player integration.
+        if (map.getTile(px, py) = 3) {
+            do player.giveKey();
+            do map.setTile(px, py, 0);
+            do hud.showMessage("Key collected. Find the exit.");
+        }
+
+        if ((map.getTile(px, py) = 4) & (player.gotKey())) {
+            let score = score + Math.multiply(level, 100);
+            if (~detectedThisLevel) {
+                let score = score + 250;
+            }
+            if (level = 4) {
+                let score = score + timer;
+            }
+
+            if (level < LevelData.levelCount()) {
+                let level = level + 1;
+                do loadLevel(level);
+                do hud.showMessage("Level clear. Keep moving!");
+            } else {
+                let won = true;
+                let running = false;
+            }
+            return;
+        }
+
+        let hidden = player.isHidden(map);
+        let noise = player.getNoise();
+        let seen = false;
+
+        let i = 0;
+        while (i < guardTotal) {
+            let guard = guards[i];
+
+            // A decoy can be heard within the normal-noise radius.
+            if (decoy.isActive()) {
+                let dx = decoy.getX();
+                let dy = decoy.getY();
+                let gx = guard.getX();
+                let gy = guard.getY();
+                let distance = Math.abs(gx - dx) + Math.abs(gy - dy);
+                if (distance < 6) {
+                    do guard.hear(dx, dy);
+                }
+            }
+
+            do guard.update(px, py, noise, hidden, map);
+            if ((~hidden) & (guard.canSee(px, py, map))) {
+                let seen = true;
+            }
+            let i = i + 1;
+        }
+
+        let i = 0;
+        while (i < cameraTotal) {
+            let cam = cameras[i];
+            do cam.update();
+            if ((~hidden) & (cam.canSee(px, py, map))) {
+                let seen = true;
+            }
+            let i = i + 1;
+        }
+
+        if (seen) {
+            if (alert < 3) {
+                let alert = alert + 1;
+            }
+            let detectedThisLevel = true;
+        } else {
+            if (alert > 0) {
+                let alert = alert - 1;
+            }
+        }
+
+        if (alert > 2) {
+            do player.loseLife();
+            if (~(player.getLives() > 0)) {
+                let gameOver = true;
+                do hud.showMessage("Caught with no lives left.");
+            } else {
+                do loadLevel(level);
+                do hud.showMessage("Caught! One life lost; level restarted.");
+            }
+            return;
+        }
+
+        // The fourth level's timer counts down once per update tick.
+        if (level = 4) {
+            if (timer > 0) {
+                let timer = timer - 1;
+            }
+            if (~(timer > 0)) {
+                let timer = 0;
+                let gameOver = true;
+                do hud.showMessage("Time expired. Game over.");
+            }
+        }
+
+        return;
+    }
+
+    method void draw() {
+        var int i;
+        var Guard guard;
+        var Camera cam;
+
+        do map.draw();
+        do player.draw();
+        if (decoy.isActive()) {
+            do decoy.draw();
+        }
+
+        let i = 0;
+        while (i < guardTotal) {
+            let guard = guards[i];
+            do guard.draw();
+            let i = i + 1;
+        }
+
+        let i = 0;
+        while (i < cameraTotal) {
+            let cam = cameras[i];
+            do cam.draw();
+            let i = i + 1;
+        }
+
+        do hud.setTimer(timer, (level = 4));
+        do hud.draw(level, player.getLives(), player.gotKey(), alert, score);
+        return;
+    }
+
+    /** Main polling loop. Q returns to the caller and disposes are done there. */
+    method void run() {
+        var int key;
+
+        let running = true;
+        do draw();
+        while (running & (~won) & (~gameOver)) {
+            let key = Keyboard.keyPressed();
+            if (key = 81) {
+                let running = false;
+            } else {
+                do update(key);
+                if ((~won) & (~gameOver)) {
+                    do draw();
+                }
+                do Sys.wait(100);
+            }
+        }
+
+        if (won) {
+            do showWinScreen();
+        } else {
+            if (gameOver) {
+                do showGameOverScreen();
+            }
+        }
+        return;
+    }
+
+    /** Free all game-owned objects; safe to call after win, loss, or quit. */
+    method void dispose() {
+        do clearActors();
+        if (~(decoy = null)) {
+            do decoy.dispose();
+            let decoy = null;
+        }
+        if (~(map = null)) {
+            do map.dispose();
+            let map = null;
+        }
+        if (~(hud = null)) {
+            do hud.dispose();
+            let hud = null;
+        }
+        return;
+    }
+
+    /** Dispose actors before rebuilding a level or leaving the game. */
+    method void clearActors() {
+        var int i;
+        var Guard guard;
+        var Camera cam;
+
+        if (~(player = null)) {
+            do player.dispose();
+            let player = null;
+        }
+
+        if (~(guards = null)) {
+            let i = 0;
+            while (i < guardTotal) {
+                let guard = guards[i];
+                do guard.dispose();
+                let i = i + 1;
+            }
+            do guards.dispose();
+            let guards = null;
+        }
+        let guardTotal = 0;
+
+        if (~(cameras = null)) {
+            let i = 0;
+            while (i < cameraTotal) {
+                let cam = cameras[i];
+                do cam.dispose();
+                let i = i + 1;
+            }
+            do cameras.dispose();
+            let cameras = null;
+        }
+        if (~(cameraCells = null)) {
+            do cameraCells.dispose();
+            let cameraCells = null;
+        }
+        let cameraTotal = 0;
+        return;
+    }
+
+    /** Return a flattened cell index for a distinct open guard start tile. */
+    method int findGuardCell(int index) {
+        var int pass;
+        var int step;
+        var int total;
+        var int offset;
+        var int cell;
+        var int x;
+        var int y;
+        var int distance;
+        var int px;
+        var int py;
+        var int selected;
+        var boolean found;
+
+        let total = Math.multiply(map.getWidth(), map.getHeight());
+        let offset = Math.multiply(level, 37);
+        let px = player.getX();
+        let py = player.getY();
+        let pass = 0;
+        let selected = 0;
+        let found = false;
+
+        // First prefer distant starts, then relax the distance if a layout
+        // contains unusually little floor space.
+        while ((pass < 3) & (~found)) {
+            let step = 0;
+            while ((step < total) & (~found)) {
+                let cell = step + offset;
+                if (~(cell < total)) {
+                    let cell = cell - total;
+                }
+                let x = cell - Math.multiply(Math.divide(cell, map.getWidth()), map.getWidth());
+                let y = Math.divide(cell, map.getWidth());
+                let distance = Math.abs(x - px) + Math.abs(y - py);
+
+                if ((map.getTile(x, y) = 0) & (distance > 0) & (~guardSpotUsed(x, y, index))) {
+                    if (pass = 0) {
+                        if (distance > 4) {
+                            let found = true;
+                            let selected = cell;
+                        }
+                    } else {
+                        if (pass = 1) {
+                            if (distance > 1) {
+                                let found = true;
+                                let selected = cell;
+                            }
+                        } else {
+                            let found = true;
+                            let selected = cell;
+                        }
+                    }
+                }
+                let step = step + 1;
+            }
+            let pass = pass + 1;
+        }
+        return selected;
+    }
+
+    /** Select a nearby waypoint connected by a clear straight corridor. */
+    method int findWaypointCell(int gx, int gy) {
+        var int step;
+        var int total;
+        var int offset;
+        var int cell;
+        var int x;
+        var int y;
+        var int distance;
+        var int checkX;
+        var int checkY;
+        var int selected;
+        var boolean found;
+        var boolean blocked;
+
+        let total = Math.multiply(map.getWidth(), map.getHeight());
+        let offset = Math.multiply(level, 59) + Math.multiply(gy, map.getWidth()) + gx;
+        while (~(offset < total)) {
+            let offset = offset - total;
+        }
+
+        let step = 0;
+        let found = false;
+        let selected = Math.multiply(gy, map.getWidth()) + gx;
+        while ((step < total) & (~found)) {
+            let cell = step + offset;
+            if (~(cell < total)) {
+                let cell = cell - total;
+            }
+            let x = cell - Math.multiply(Math.divide(cell, map.getWidth()), map.getWidth());
+            let y = Math.divide(cell, map.getWidth());
+            let distance = Math.abs(x - gx) + Math.abs(y - gy);
+
+            // A straight, unobstructed waypoint suits the simple step-toward AI.
+            if ((map.getTile(x, y) = 0) & (distance > 1) & (distance < 5) & ((x = gx) | (y = gy)) & (~((x = player.getX()) & (y = player.getY())))) {
+                let checkX = gx;
+                let checkY = gy;
+                let blocked = false;
+                while (((~(checkX = x)) | (~(checkY = y))) & (~blocked)) {
+                    if (checkX < x) {
+                        let checkX = checkX + 1;
+                    } else {
+                        if (checkX > x) {
+                            let checkX = checkX - 1;
+                        } else {
+                            if (checkY < y) {
+                                let checkY = checkY + 1;
+                            } else {
+                                let checkY = checkY - 1;
+                            }
+                        }
+                    }
+                    if (map.isWall(checkX, checkY)) {
+                        let blocked = true;
+                    }
+                }
+                if (~blocked) {
+                    let selected = cell;
+                    let found = true;
+                }
+            }
+            let step = step + 1;
+        }
+        return selected;
+    }
+
+    /** Return whether an earlier guard already occupies this cell. */
+    method boolean guardSpotUsed(int x, int y, int upto) {
+        var int i;
+        var boolean used;
+        var Guard guard;
+
+        let i = 0;
+        let used = false;
+        while ((i < upto) & (~used)) {
+            let guard = guards[i];
+            if ((guard.getX() = x) & (guard.getY() = y)) {
+                let used = true;
+            }
+            let i = i + 1;
+        }
+        return used;
+    }
+
+    /** Return a flattened cell index for a distinct camera location. */
+    method int findCameraCell(int index) {
+        var int pass;
+        var int step;
+        var int total;
+        var int offset;
+        var int cell;
+        var int x;
+        var int y;
+        var int distance;
+        var int px;
+        var int py;
+        var int selected;
+        var boolean found;
+
+        let total = Math.multiply(map.getWidth(), map.getHeight());
+        let offset = Math.multiply(level, 83) + Math.multiply(index, 47);
+        while (~(offset < total)) {
+            let offset = offset - total;
+        }
+        let px = player.getX();
+        let py = player.getY();
+        let pass = 0;
+        let selected = 0;
+        let found = false;
+
+        while ((pass < 2) & (~found)) {
+            let step = 0;
+            while ((step < total) & (~found)) {
+                let cell = step + offset;
+                if (~(cell < total)) {
+                    let cell = cell - total;
+                }
+                let x = cell - Math.multiply(Math.divide(cell, map.getWidth()), map.getWidth());
+                let y = Math.divide(cell, map.getWidth());
+                let distance = Math.abs(x - px) + Math.abs(y - py);
+                if ((map.getTile(x, y) = 0) & (distance > 0) & (~guardSpotUsed(x, y, guardTotal)) & (~cameraSpotUsed(x, y, index))) {
+                    if (pass = 0) {
+                        if (distance > 5) {
+                            let selected = cell;
+                            let found = true;
+                        }
+                    } else {
+                        let selected = cell;
+                        let found = true;
+                    }
+                }
+                let step = step + 1;
+            }
+            let pass = pass + 1;
+        }
+        return selected;
+    }
+
+    /** Return whether a previously created camera already occupies this cell. */
+    method boolean cameraSpotUsed(int x, int y, int upto) {
+        var int i;
+        var int targetCell;
+        var boolean used;
+
+        let i = 0;
+        let used = false;
+        let targetCell = Math.multiply(y, map.getWidth()) + x;
+        while ((i < upto) & (~used)) {
+            if (cameraCells[i] = targetCell) {
+                let used = true;
+            }
+            let i = i + 1;
+        }
+        return used;
+    }
+
+    /** Throw a decoy up to three tiles in the last movement direction. */
+    method void throwDecoy() {
+        var int px;
+        var int py;
+        var int step;
+        var int tx;
+        var int ty;
+        var int candidateX;
+        var int candidateY;
+        var boolean canUse;
+
+        let px = player.getX();
+        let py = player.getY();
+        let tx = px;
+        let ty = py;
+        let step = 1;
+
+        while (step < 4) {
+            let candidateX = px;
+            let candidateY = py;
+            if (lastDir = 0) {
+                let candidateY = py - step;
+            } else {
+                if (lastDir = 1) {
+                    let candidateX = px + step;
+                } else {
+                    if (lastDir = 2) {
+                        let candidateY = py + step;
+                    } else {
+                        let candidateX = px - step;
+                    }
+                }
+            }
+
+            let canUse = true;
+            if ((candidateX < 0) | (~(candidateX < map.getWidth())) | (candidateY < 0) | (~(candidateY < map.getHeight()))) {
+                let canUse = false;
+            } else {
+                if (map.isWall(candidateX, candidateY)) {
+                    let canUse = false;
+                }
+            }
+
+            if (canUse) {
+                let tx = candidateX;
+                let ty = candidateY;
+                let step = step + 1;
+            } else {
+                let step = 4;
+            }
+        }
+
+        do decoy.throwTo(tx, ty);
+        do hud.showMessage("Decoy thrown. Guards may investigate.");
+        return;
+    }
+
+    /** Show the final success screen and wait for a key before returning. */
+    method void showWinScreen() {
+        do Screen.clearScreen();
+        do Output.moveCursor(6, 20);
+        do Output.printString("SHADOW GRID: YOU WIN!");
+        do Output.moveCursor(9, 18);
+        do Output.printString("All four levels completed.");
+        do Output.moveCursor(12, 22);
+        do Output.printString("Final score: ");
+        do Output.printInt(score);
+        do Output.moveCursor(17, 18);
+        do Output.printString("Press any key to exit.");
+        do Keyboard.readChar();
+        return;
+    }
+
+    /** Show the final failure screen and wait for a key before returning. */
+    method void showGameOverScreen() {
+        do Screen.clearScreen();
+        do Output.moveCursor(6, 22);
+        do Output.printString("GAME OVER");
+        do Output.moveCursor(9, 18);
+        do Output.printString("Final score: ");
+        do Output.printInt(score);
+        do Output.moveCursor(13, 18);
+        do Output.printString("Try another stealth run.");
+        do Output.moveCursor(17, 18);
+        do Output.printString("Press any key to exit.");
+        do Keyboard.readChar();
+        return;
+    }
+}

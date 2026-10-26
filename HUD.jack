@@ -1,0 +1,177 @@
+/** Status and message display for Shadow Grid. */
+class HUD {
+    field String message;
+    field String labelLevel;
+    field String labelLives;
+    field String labelKey;
+    field String keyYes;
+    field String keyNo;
+    field String labelAlert;
+    field String labelScore;
+    field String labelTime;
+    field int timerRemaining;
+    field int messageTicks;
+    field boolean timerEnabled;
+
+    constructor HUD new() {
+        let message = String.new(1);
+        do message.appendChar(32);
+
+        // Keep frequently printed labels as fields. Creating a new string
+        // literal every frame would waste the game's small heap.
+        let labelLevel = String.new(3);
+        do labelLevel.appendChar(76);
+        do labelLevel.appendChar(86);
+        do labelLevel.appendChar(32);
+
+        let labelLives = String.new(7);
+        do labelLives.appendChar(32);
+        do labelLives.appendChar(32);
+        do labelLives.appendChar(76);
+        do labelLives.appendChar(73);
+        do labelLives.appendChar(70);
+        do labelLives.appendChar(69);
+        do labelLives.appendChar(32);
+
+        let labelKey = String.new(6);
+        do labelKey.appendChar(32);
+        do labelKey.appendChar(32);
+        do labelKey.appendChar(75);
+        do labelKey.appendChar(69);
+        do labelKey.appendChar(89);
+        do labelKey.appendChar(32);
+
+        let keyYes = String.new(3);
+        do keyYes.appendChar(89);
+        do keyYes.appendChar(69);
+        do keyYes.appendChar(83);
+
+        let keyNo = String.new(2);
+        do keyNo.appendChar(78);
+        do keyNo.appendChar(79);
+
+        let labelAlert = String.new(8);
+        do labelAlert.appendChar(32);
+        do labelAlert.appendChar(32);
+        do labelAlert.appendChar(65);
+        do labelAlert.appendChar(76);
+        do labelAlert.appendChar(69);
+        do labelAlert.appendChar(82);
+        do labelAlert.appendChar(84);
+        do labelAlert.appendChar(32);
+
+        let labelScore = String.new(8);
+        do labelScore.appendChar(32);
+        do labelScore.appendChar(32);
+        do labelScore.appendChar(83);
+        do labelScore.appendChar(67);
+        do labelScore.appendChar(79);
+        do labelScore.appendChar(82);
+        do labelScore.appendChar(69);
+        do labelScore.appendChar(32);
+
+        let labelTime = String.new(7);
+        do labelTime.appendChar(32);
+        do labelTime.appendChar(32);
+        do labelTime.appendChar(84);
+        do labelTime.appendChar(73);
+        do labelTime.appendChar(77);
+        do labelTime.appendChar(69);
+        do labelTime.appendChar(32);
+
+        let timerRemaining = 0;
+        let messageTicks = 0;
+        let timerEnabled = false;
+        return this;
+    }
+
+    method void draw(int level, int lives, boolean hasKey, int alert, int score) {
+        var int i;
+
+        // Row 22 is the one text row reserved by the team brief. A message
+        // temporarily uses that row, then the regular status line returns.
+        do Output.moveCursor(22, 0);
+        let i = 0;
+        while (i < 64) {
+            do Output.printChar(32);
+            let i = i + 1;
+        }
+        do Output.moveCursor(22, 0);
+
+        if (messageTicks > 0) {
+            do Output.printString(message);
+            let messageTicks = messageTicks - 1;
+        } else {
+            do Output.printString(labelLevel);
+            do Output.printInt(level);
+            do Output.printString(labelLives);
+            do Output.printInt(lives);
+            do Output.printString(labelKey);
+            if (hasKey) {
+                do Output.printString(keyYes);
+            } else {
+                do Output.printString(keyNo);
+            }
+            do Output.printString(labelAlert);
+            do Output.printInt(alert);
+            do Output.printChar(47);
+            do Output.printChar(51);
+            do Output.printString(labelScore);
+            do Output.printInt(score);
+
+            if (timerEnabled) {
+                do Output.printString(labelTime);
+                do Output.printInt(timerRemaining);
+            }
+        }
+        return;
+    }
+
+    /** Store the level-4 timer for inclusion in the regular HUD line. */
+    method void setTimer(int remaining, boolean enabled) {
+        let timerRemaining = remaining;
+        let timerEnabled = enabled;
+        return;
+    }
+
+    /** Show a message briefly in the reserved HUD row. */
+    method void showMessage(String msg) {
+        if (~(message = null)) {
+            do message.dispose();
+        }
+        let message = msg;
+        let messageTicks = 6;
+        return;
+    }
+
+    method void dispose() {
+        if (~(message = null)) {
+            do message.dispose();
+        }
+        if (~(labelLevel = null)) {
+            do labelLevel.dispose();
+        }
+        if (~(labelLives = null)) {
+            do labelLives.dispose();
+        }
+        if (~(labelKey = null)) {
+            do labelKey.dispose();
+        }
+        if (~(keyYes = null)) {
+            do keyYes.dispose();
+        }
+        if (~(keyNo = null)) {
+            do keyNo.dispose();
+        }
+        if (~(labelAlert = null)) {
+            do labelAlert.dispose();
+        }
+        if (~(labelScore = null)) {
+            do labelScore.dispose();
+        }
+        if (~(labelTime = null)) {
+            do labelTime.dispose();
+        }
+        return;
+    }
+}
