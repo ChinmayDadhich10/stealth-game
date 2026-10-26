@@ -1,0 +1,228 @@
+/**
+ * Player (Member B).
+ * Positions are in TILE units (tile = 16x16 px). Map is 32 x 15 tiles.
+ * Tile values: 0 floor, 1 wall, 2 shadow, 3 key, 4 exit.
+ * Directions: 0 up, 1 right, 2 down, 3 left.
+ *
+ * Expected call order from Game each tick:
+ *   player.erase();  player.update(key, map);  player.draw();
+ * Game should redraw the map tile under the player's old position after erase()
+ * (erase paints the tile white; shadow/key/exit tiles need Map to redraw them).
+ */
+class Player {
+    field int x, y;
+    field int lives;
+    field int noise;
+    field int lastKey;
+    field int facing;
+    field int decoys;
+    field boolean hasKey;
+    field boolean sneaking;
+    field boolean hidden;
+
+    constructor Player new(int ax, int ay) {
+        let x = ax;
+        let y = ay;
+        let lives = 3;
+        let noise = 0;
+        let lastKey = 0;
+        let facing = 1;
+        let decoys = 2;
+        let hasKey = false;
+        let sneaking = false;
+        let hidden = false;
+        return this;
+    }
+
+    method int getX() { return x; }
+    method int getY() { return y; }
+    method int getNoise() { return noise; }
+    method int getLives() { return lives; }
+    method boolean gotKey() { return hasKey; }
+    method int getFacing() { return facing; }
+    method int getDecoys() { return decoys; }
+    method boolean isSneaking() { return sneaking; }
+
+    method void giveKey() {
+        let hasKey = true;
+        return;
+    }
+
+    method void loseLife() {
+        if (lives > 0) {
+            let lives = lives - 1;
+        }
+        return;
+    }
+
+    /** Called when the level is (re)started: new position, key and decoys reset, lives kept. */
+    method void resetTo(int ax, int ay) {
+        let x = ax;
+        let y = ay;
+        let noise = 0;
+        let lastKey = 0;
+        let facing = 1;
+        let decoys = 2;
+        let hasKey = false;
+        let sneaking = false;
+        let hidden = false;
+        return;
+    }
+
+    /** Uses one decoy if available. Returns true if the throw is allowed. */
+    method boolean useDecoy() {
+        if (decoys > 0) {
+            let decoys = decoys - 1;
+            return true;
+        }
+        return false;
+    }
+
+    /** True if tile (tx, ty) can be walked on. Exit is locked until the key is held. */
+    method boolean canEnter(int tx, int ty, Map map) {
+        if (tx < 0) { return false; }
+        if (ty < 0) { return false; }
+        if (~(tx < map.getWidth())) { return false; }
+        if (~(ty < map.getHeight())) { return false; }
+        if (map.isWall(tx, ty)) { return false; }
+        if (map.getTile(tx, ty) = 4) {
+            if (~hasKey) { return false; }
+        }
+        return true;
+    }
+
+    /** Moves one tile per tick, handles sneak toggle, noise and key pickup. */
+    method void update(int key, Map map) {
+        var int nx, ny;
+        var boolean moved;
+
+        let nx = x;
+        let ny = y;
+        let moved = false;
+
+        // Sneak toggle on key press edge (keyPressed repeats while held)
+        if ((key = 83) & ~(lastKey = 83)) {
+            let sneaking = ~sneaking;
+        }
+        let lastKey = key;
+
+        if (key = 130) { let nx = x - 1; let facing = 3; }
+        if (key = 132) { let nx = x + 1; let facing = 1; }
+        if (key = 131) { let ny = y - 1; let facing = 0; }
+        if (key = 133) { let ny = y + 1; let facing = 2; }
+
+        if (~(nx = x) | ~(ny = y)) {
+            if (canEnter(nx, ny, map)) {
+                let x = nx;
+                let y = ny;
+                let moved = true;
+            }
+        }
+
+        // Key pickup: remove the key tile so it can only be taken once
+        if (map.getTile(x, y) = 3) {
+            let hasKey = true;
+            do map.setTile(x, y, 0);
+        }
+
+        let hidden = map.isShadow(x, y);
+
+        // Noise: still or hidden = 0, sneaking = 1, normal = 3
+        let noise = 0;
+        if (moved) {
+            if (sneaking) { let noise = 1; }
+            else { let noise = 3; }
+        }
+        if (hidden) { let noise = 0; }
+        return;
+    }
+
+    method boolean isHidden(Map map) {
+        return map.isShadow(x, y);
+    }
+
+    /** True when standing on the exit tile with the key (Game uses this for level win). */
+    method boolean reachedExit(Map map) {
+        if (hasKey) {
+            if (map.getTile(x, y) = 4) { return true; }
+        }
+        return false;
+    }
+
+    /** Tile where a decoy lands: up to 4 tiles ahead, stopping before a wall. */
+    method int getThrowX(Map map) {
+        var int i, dx;
+        let dx = 0;
+        if (facing = 1) { let dx = 1; }
+        if (facing = 3) { let dx = -1; }
+        let i = 0;
+        while (i < 4) {
+            if (~(canEnter(x + Math.multiply(dx, i + 1), y + stepY(i + 1), map))) {
+                return x + Math.multiply(dx, i);
+            }
+            let i = i + 1;
+        }
+        return x + Math.multiply(dx, 4);
+    }
+
+    method int getThrowY(Map map) {
+        var int i, dy;
+        let dy = 0;
+        if (facing = 0) { let dy = -1; }
+        if (facing = 2) { let dy = 1; }
+        let i = 0;
+        while (i < 4) {
+            if (~(canEnter(x + stepX(i + 1), y + Math.multiply(dy, i + 1), map))) {
+                return y + Math.multiply(dy, i);
+            }
+            let i = i + 1;
+        }
+        return y + Math.multiply(dy, 4);
+    }
+
+    // y offset after n steps in the facing direction (0 for horizontal facing)
+    method int stepY(int n) {
+        if (facing = 0) { return -n; }
+        if (facing = 2) { return n; }
+        return 0;
+    }
+
+    // x offset after n steps in the facing direction (0 for vertical facing)
+    method int stepX(int n) {
+        if (facing = 3) { return -n; }
+        if (facing = 1) { return n; }
+        return 0;
+    }
+
+    /** Normal = big square, sneaking = small square, hidden in shadow = outline only. */
+    method void draw() {
+        var int px, py;
+        let px = Math.multiply(x, 16);
+        let py = Math.multiply(y, 16);
+        do Screen.setColor(true);
+        if (hidden) {
+            do Screen.drawRectangle(px + 3, py + 3, px + 12, py + 12);
+        } else {
+            if (sneaking) {
+                do Screen.fillRectangle(px + 5, py + 5, px + 10, py + 10);
+            } else {
+                do Screen.fillRectangle(px + 3, py + 3, px + 12, py + 12);
+            }
+        }
+        return;
+    }
+
+    method void erase() {
+        var int px, py;
+        let px = Math.multiply(x, 16);
+        let py = Math.multiply(y, 16);
+        do Screen.setColor(false);
+        do Screen.fillRectangle(px, py, px + 15, py + 15);
+        return;
+    }
+
+    method void dispose() {
+        do Memory.deAlloc(this);
+        return;
+    }
+}
