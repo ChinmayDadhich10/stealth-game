@@ -1,0 +1,215 @@
+// Owner: Member A
+// Static data for the 4 levels. Coordinates are in TILES (map is 32 x 15).
+// Player always starts at (1,1); the exit is always at (30,13).
+class LevelData {
+
+    // ---------- basic info ----------
+    function int levelCount() { return 4; }
+    function int playerStartX(int level) { return 1; }
+    function int playerStartY(int level) { return 1; }
+
+    function int keyX(int level) {
+        if (level = 3) { return 20; }
+        return 15;
+    }
+
+    function int keyY(int level) {
+        if (level = 1) { return 3; }
+        if (level = 2) { return 7; }
+        if (level = 3) { return 6; }
+        return 8;
+    }
+
+    function int exitX(int level) { return 30; }
+    function int exitY(int level) { return 13; }
+
+    // Time limit in game ticks (0 = no limit). Level 4 only.
+    function int timeLimit(int level) {
+        if (level = 4) { return 900; }
+        return 0;
+    }
+
+    // ---------- guards ----------
+    function int guardCount(int level) {
+        if (level = 1) { return 2; }
+        if (level = 2) { return 1; }
+        if (level = 3) { return 2; }
+        return 3;
+    }
+
+    // Every guard patrols between exactly 2 waypoints (w = 0 and w = 1).
+    // Waypoint 0 is also the guard's start position.
+    function int wpPerGuard() { return 2; }
+
+    function int wpX(int level, int g, int w) {
+        if (level = 1) {
+            if (g = 0) { return 14; }
+            return 25;
+        }
+        if (level = 2) {
+            if (w = 0) { return 8; }
+            return 22;
+        }
+        if (level = 3) {
+            if (g = 0) { return 12; }
+            return 19;
+        }
+        // level 4
+        if (g = 0) {
+            if (w = 0) { return 6; }
+            return 20;
+        }
+        if (g = 1) {
+            if (w = 0) { return 8; }
+            return 26;
+        }
+        if (w = 0) { return 28; }
+        return 10;
+    }
+
+    function int wpY(int level, int g, int w) {
+        if (level = 1) {
+            if (g = 0) {
+                if (w = 0) { return 7; }
+                return 12;
+            }
+            if (w = 0) { return 3; }
+            return 11;
+        }
+        if (level = 2) { return 7; }
+        if (level = 3) {
+            if (g = 0) {
+                if (w = 0) { return 5; }
+                return 12;
+            }
+            if (w = 0) { return 2; }
+            return 10;
+        }
+        // level 4
+        if (g = 0) { return 2; }
+        if (g = 1) { return 7; }
+        return 12;
+    }
+
+    // ---------- cameras ----------
+    // Directions: 0 up, 1 right, 2 down, 3 left. A camera sweeps dirA <-> dirB.
+    function int cameraCount(int level) {
+        if (level = 2) { return 1; }
+        if (level = 4) { return 2; }
+        return 0;
+    }
+
+    function int cameraX(int level, int i) {
+        if (level = 2) { return 30; }
+        if (i = 0) { return 30; }
+        return 1;
+    }
+
+    function int cameraY(int level, int i) {
+        if (level = 2) { return 1; }
+        if (i = 0) { return 5; }
+        return 13;
+    }
+
+    function int cameraDirA(int level, int i) {
+        if (level = 4) {
+            if (i = 1) { return 1; }
+        }
+        return 3;
+    }
+
+    function int cameraDirB(int level, int i) {
+        if (level = 4) {
+            if (i = 1) { return 0; }
+        }
+        return 2;
+    }
+
+    // ---------- wall helpers ----------
+    function void hWall(Map map, int x1, int x2, int y) {
+        var int x;
+        let x = x1;
+        while (~(x > x2)) {
+            do map.setTile(x, y, 1);
+            let x = x + 1;
+        }
+        return;
+    }
+
+    function void vWall(Map map, int x, int y1, int y2) {
+        var int y;
+        let y = y1;
+        while (~(y > y2)) {
+            do map.setTile(x, y, 1);
+            let y = y + 1;
+        }
+        return;
+    }
+
+    // ---------- level layouts ----------
+    // Level 1: two vertical walls make three zones; 2 guards and a key.
+    function void buildLevel1(Map map) {
+        do LevelData.vWall(map, 10, 1, 9);
+        do LevelData.vWall(map, 20, 5, 13);
+        return;
+    }
+
+    // Level 2: serpentine corridors, shadow patches, 1 guard + 1 camera.
+    function void buildLevel2(Map map) {
+        do LevelData.hWall(map, 1, 20, 5);
+        do LevelData.hWall(map, 11, 30, 9);
+        do map.setTile(12, 2, 2);
+        do map.setTile(13, 2, 2);
+        do map.setTile(5, 7, 2);
+        do map.setTile(6, 7, 2);
+        do map.setTile(20, 11, 2);
+        do map.setTile(21, 11, 2);
+        return;
+    }
+
+    // Level 3: three rooms joined by gaps; guards react to noise.
+    function void buildLevel3(Map map) {
+        do LevelData.vWall(map, 8, 1, 10);
+        do LevelData.vWall(map, 16, 4, 13);
+        do LevelData.vWall(map, 24, 1, 10);
+        do map.setTile(10, 8, 2);
+        do map.setTile(10, 9, 2);
+        do map.setTile(22, 6, 2);
+        return;
+    }
+
+    // Level 4: long corridors with pillars, 3 guards, 2 cameras, timer.
+    function void buildLevel4(Map map) {
+        do LevelData.hWall(map, 4, 26, 4);
+        do LevelData.hWall(map, 5, 27, 10);
+        do LevelData.vWall(map, 15, 5, 6);
+        do LevelData.vWall(map, 22, 8, 9);
+        do map.setTile(12, 2, 2);
+        do map.setTile(13, 2, 2);
+        do map.setTile(3, 7, 2);
+        do map.setTile(4, 7, 2);
+        do map.setTile(20, 13, 2);
+        do map.setTile(21, 13, 2);
+        return;
+    }
+
+    // ---------- load a level into the map ----------
+    function void load(int level, Map map) {
+        do map.clear();
+
+        // border walls (shared by every level)
+        do LevelData.hWall(map, 0, 31, 0);
+        do LevelData.hWall(map, 0, 31, 14);
+        do LevelData.vWall(map, 0, 0, 14);
+        do LevelData.vWall(map, 31, 0, 14);
+
+        if (level = 1) { do LevelData.buildLevel1(map); }
+        if (level = 2) { do LevelData.buildLevel2(map); }
+        if (level = 3) { do LevelData.buildLevel3(map); }
+        if (level = 4) { do LevelData.buildLevel4(map); }
+
+        do map.setTile(LevelData.keyX(level), LevelData.keyY(level), 3);
+        do map.setTile(LevelData.exitX(level), LevelData.exitY(level), 4);
+        return;
+    }
+}
