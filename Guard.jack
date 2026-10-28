@@ -1,0 +1,456 @@
+/**
+ * Guard (Member C)
+ * States: 0 patrol, 1 suspicious, 2 chase, 3 return
+ * Directions: 0 up, 1 right, 2 down, 3 left
+ * All positions are in TILE units (tile = 16x16 pixels).
+ *
+ * update() erases/redraws the guard itself when it moves, turns or changes
+ * state (it calls map.drawTile on the old tile), so Game only needs to call
+ * update() once per tick. Game may still call draw()/erase() safely.
+ * Nothing is allocated after the constructor, so no heap leak in the loop.
+ * Without pathfinding a guard can get stuck on a wall after investigating a
+ * noise, so it remembers the tiles it walked (trail) and retraces them on Return.
+ */
+class Guard {
+    field int x, y, dir, state, count, target, tick, stuck;
+    field int alert, lostTimer, susTimer, waitTimer, retTimer;
+    field int noiseX, noiseY, lastX, lastY, wig;
+    field boolean didMove, lastHidden;
+    field Array wpx, wpy, trail;
+    field int tsp;
+
+    constructor Guard new(int ax, int ay, int n) {
+        var int i;
+        let x = ax;
+        let y = ay;
+        let dir = 1;
+        let state = 0;
+        let count = n;
+        if (count < 1) { let count = 1; }
+        let wpx = Array.new(count);
+        let wpy = Array.new(count);
+        let trail = Array.new(64);
+        let tsp = 0;
+        let i = 0;
+        while (i < count) {
+            let wpx[i] = ax;
+            let wpy[i] = ay;
+            let i = i + 1;
+        }
+        if (count > 1) { let target = 1; } else { let target = 0; }
+        let tick = 0;
+        let stuck = 0;
+        let alert = 0;
+        let lostTimer = 0;
+        let susTimer = 0;
+        let waitTimer = 0;
+        let retTimer = 0;
+        let noiseX = ax;
+        let noiseY = ay;
+        let lastX = ax;
+        let lastY = ay;
+        let wig = 1;
+        let didMove = false;
+        let lastHidden = false;
+        return this;
+    }
+
+    /** Waypoint 0 is set to the start tile by the constructor. */
+    method void setWaypoint(int i, int wx, int wy) {
+        if ((~(i < 0)) & (i < count)) {
+            let wpx[i] = wx;
+            let wpy[i] = wy;
+            if (i = target) {
+                do faceToward(wx, wy);
+            }
+        }
+        return;
+    }
+
+    method int getX() { return x; }
+    method int getY() { return y; }
+    method int getState() { return state; }
+    method int getDir() { return dir; }
+    /** Alert meter of this guard, 0..3 (3 = caught). */
+    method int getAlert() { return alert; }
+
+    // ---------------------------------------------------------------
+    // helpers
+    // ---------------------------------------------------------------
+    method int sign(int v) {
+        if (v > 0) { return 1; }
+        if (v < 0) { return -1; }
+        return 0;
+    }
+
+    method int stepDX(int d) {
+        if (d = 1) { return 1; }
+        if (d = 3) { return -1; }
+        return 0;
+    }
+
+    method int stepDY(int d) {
+        if (d = 0) { return -1; }
+        if (d = 2) { return 1; }
+        return 0;
+    }
+
+    method void faceToward(int tx, int ty) {
+        var int dx, dy;
+        let dx = tx - x;
+        let dy = ty - y;
+        if ((dx = 0) & (dy = 0)) { return; }
+        if ((Math.abs(dx)) > (Math.abs(dy))) {
+            if (dx > 0) { let dir = 1; } else { let dir = 3; }
+        } else {
+            if (dy > 0) { let dir = 2; } else { let dir = 0; }
+        }
+        return;
+    }
+
+    method void nextTarget() {
+        let target = target + 1;
+        if (target = count) { let target = 0; }
+        return;
+    }
+
+    /** Try to move by (mx,my); returns true if the guard moved. */
+    method boolean tryMove(int mx, int my, Map map) {
+        if ((mx = 0) & (my = 0)) { return false; }
+        if (map.isWall(x + mx, y + my)) { return false; }
+        let x = x + mx;
+        let y = y + my;
+        if (mx > 0) { let dir = 1; }
+        if (mx < 0) { let dir = 3; }
+        if (my < 0) { let dir = 0; }
+        if (my > 0) { let dir = 2; }
+        return true;
+    }
+
+    // ---------------------------------------------------------------
+    // trail: tiles walked since leaving the patrol line (used to walk back)
+    // tile (x,y) is stored as (y * 32) + x
+    // ---------------------------------------------------------------
+
+    /** Record a tile. Stepping back onto the previous tile cancels it. */
+    method void pushTrail(int tx, int ty) {
+        var int v, i;
+        let v = (ty * 32) + tx;
+        if (tsp > 1) {
+            if (trail[tsp - 2] = v) {
+                let tsp = tsp - 1;
+                return;
+            }
+        }
+        if (tsp = 64) {
+            let i = 1;
+            while (i < 64) {
+                let trail[i - 1] = trail[i];
+                let i = i + 1;
+            }
+            let tsp = 63;
+        }
+        let trail[tsp] = v;
+        let tsp = tsp + 1;
+        return;
+    }
+
+    /** One walking step back along the trail. Returns false if the trail is empty. */
+    method boolean stepBack(Map map) {
+        var int tv, ty, tx;
+        var boolean more;
+        let more = true;
+        while (more) {
+            if (tsp > 0) {
+                if (trail[tsp - 1] = ((y * 32) + x)) { let tsp = tsp - 1; } else { let more = false; }
+            } else { let more = false; }
+        }
+        if (tsp = 0) { return false; }
+        let tv = trail[tsp - 1];
+        let ty = tv / 32;
+        let tx = tv - (ty * 32);
+        do stepToward(tx, ty, map);
+        return true;
+    }
+
+    // ---------------------------------------------------------------
+    // vision / catching
+    // ---------------------------------------------------------------
+
+    /** True if the player is in line of sight: same tile, adjacent tile,
+        or up to 4 tiles straight ahead with no sight-blocking tile between. */
+    method boolean canSee(int px, int py, Map map) {
+        var int d, dxv, dyv, tx, ty;
+        if ((px = x) & (py = y)) { return true; }
+        if (((Math.abs(px - x)) + (Math.abs(py - y))) = 1) { return true; }
+        let dxv = stepDX(dir);
+        let dyv = stepDY(dir);
+        let d = 1;
+        while (d < 5) {
+            let tx = x + (dxv * d);
+            let ty = y + (dyv * d);
+            if (map.blocksSight(tx, ty)) { return false; }
+            if ((tx = px) & (ty = py)) { return true; }
+            let d = d + 1;
+        }
+        return false;
+    }
+
+    /** True when the alert meter is full (3 ticks in view), or the guard
+        stands on the player's tile and the player is not hidden.
+        The meter is advanced inside update(). */
+    method boolean caughtPlayer(int px, int py, Map map) {
+        if (~(alert < 3)) { return true; }
+        if ((x = px) & (y = py) & (~lastHidden)) { return true; }
+        return false;
+    }
+
+    // ---------------------------------------------------------------
+    // movement
+    // ---------------------------------------------------------------
+
+    /** One tile toward (tx,ty). Prefers the longer axis, falls back to the
+        other axis, then sidesteps. Sets didMove. */
+    method void stepToward(int tx, int ty, Map map) {
+        var int dx, dy, adx, ady, sx, sy, side;
+        var boolean moved;
+        let dx = tx - x;
+        let dy = ty - y;
+        let didMove = false;
+        if ((dx = 0) & (dy = 0)) { return; }
+        let adx = Math.abs(dx);
+        let ady = Math.abs(dy);
+        let sx = sign(dx);
+        let sy = sign(dy);
+        let moved = false;
+        if (adx > ady) {
+            let moved = tryMove(sx, 0, map);
+            if (~moved) { let moved = tryMove(0, sy, map); }
+        } else {
+            let moved = tryMove(0, sy, map);
+            if (~moved) { let moved = tryMove(sx, 0, map); }
+        }
+        if (~moved) {
+            let wig = 0 - wig;
+            let side = wig;
+            if (adx > ady) {
+                let moved = tryMove(0, side, map);
+                if (~moved) { let moved = tryMove(0, 0 - side, map); }
+            } else {
+                let moved = tryMove(side, 0, map);
+                if (~moved) { let moved = tryMove(0 - side, 0, map); }
+            }
+        }
+        let didMove = moved;
+        return;
+    }
+
+    /** A noise (decoy or player) at tile (tx,ty). Patrolling/returning/
+        suspicious guards go and investigate; a chasing guard ignores it. */
+    method void hear(int tx, int ty) {
+        if (state = 2) { return; }
+        if (state = 0) {
+            let tsp = 0;
+            do pushTrail(x, y);
+        }
+        let noiseX = tx;
+        let noiseY = ty;
+        let state = 1;
+        let susTimer = 0;
+        let waitTimer = 0;
+        return;
+    }
+
+    // ---------------------------------------------------------------
+    // main per-tick update
+    // ---------------------------------------------------------------
+
+    /** noise is Player.getNoise() (already 0 when still or in shadow). */
+    method void update(int px, int py, int noise, boolean hidden, Map map) {
+        var int oldX, oldY, oldDir, oldState, dist;
+        var boolean seen, heard, slow, fast;
+
+        let oldX = x;
+        let oldY = y;
+        let oldDir = dir;
+        let oldState = state;
+        let lastHidden = hidden;
+
+        // speed: slow = 1 move per 2 ticks, fast (chase) = 2 moves per 3 ticks
+        let tick = tick + 1;
+        if (tick > 5) { let tick = 0; }
+        let slow = (tick = 0) | (tick = 2) | (tick = 4);
+        let fast = ~((tick = 0) | (tick = 3));
+
+        // perception
+        let seen = (~hidden) & canSee(px, py, map);
+        if (seen) {
+            if (alert < 3) { let alert = alert + 1; }
+        } else {
+            if (alert > 0) { let alert = alert - 1; }
+        }
+        let dist = (Math.abs(x - px)) + (Math.abs(y - py));
+        let heard = (~hidden) & (noise > 0) & (dist < (noise * 2));
+
+        if (seen) {
+            if (state = 0) {
+                let tsp = 0;
+                do pushTrail(x, y);
+            }
+            let state = 2;
+            let lostTimer = 0;
+            let lastX = px;
+            let lastY = py;
+        } else {
+            if (state = 2) {
+                let lostTimer = lostTimer + 1;
+                if (lostTimer > 8) {
+                    let state = 3;
+                    let retTimer = 0;
+                }
+            } else {
+                if (heard) { do hear(px, py); }
+            }
+        }
+
+        // behaviour
+        if (state = 0) {
+            if (slow) {
+                if ((x = wpx[target]) & (y = wpy[target])) {
+                    do nextTarget();
+                    let stuck = 0;
+                } else {
+                    do stepToward(wpx[target], wpy[target], map);
+                    if (didMove) {
+                        let stuck = 0;
+                    } else {
+                        let stuck = stuck + 1;
+                        if (stuck > 4) {
+                            do nextTarget();
+                            let stuck = 0;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (state = 1) {
+            let susTimer = susTimer + 1;
+            if (susTimer > 25) {
+                let state = 3;
+                let retTimer = 0;
+            } else {
+                if (slow) {
+                    if ((x = noiseX) & (y = noiseY)) {
+                        // arrived: look around for a few moves, then give up
+                        let waitTimer = waitTimer + 1;
+                        let dir = dir + 1;
+                        if (dir > 3) { let dir = 0; }
+                        if (waitTimer > 3) {
+                            let state = 3;
+                            let retTimer = 0;
+                        }
+                    } else {
+                        do stepToward(noiseX, noiseY, map);
+                        if (didMove) { do pushTrail(x, y); }
+                    }
+                }
+            }
+        }
+
+        if (state = 2) {
+            if (fast) {
+                do stepToward(lastX, lastY, map);
+                if (didMove) { do pushTrail(x, y); }
+            }
+        }
+
+        if (state = 3) {
+            let retTimer = retTimer + 1;
+            if (retTimer > 200) {
+                let state = 0;
+                let stuck = 0;
+            } else {
+                if (slow) {
+                    if (~(stepBack(map))) {
+                        if ((x = wpx[target]) & (y = wpy[target])) {
+                            let state = 0;
+                            let stuck = 0;
+                        } else {
+                            do stepToward(wpx[target], wpy[target], map);
+                        }
+                    }
+                }
+            }
+        }
+
+        // redraw only when something visible changed
+        if ((~(x = oldX)) | (~(y = oldY)) | (~(dir = oldDir)) | (~(state = oldState))) {
+            do eraseTile(oldX, oldY);
+            do map.drawTile(oldX, oldY);
+        }
+        do draw();
+        return;
+    }
+
+    // ---------------------------------------------------------------
+    // drawing
+    // ---------------------------------------------------------------
+
+    method void eraseTile(int tx, int ty) {
+        var int px, py;
+        let px = tx * 16;
+        let py = ty * 16;
+        do Screen.setColor(false);
+        do Screen.drawRectangle(px, py, px + 15, py + 15);
+        do Screen.setColor(true);
+        return;
+    }
+
+    /** Square with a hole (hole is solid while chasing) plus a facing mark.
+        After erase(), call map.drawTile(getX(), getY()). */
+    method void draw() {
+        var int px, py;
+        let px = x * 16;
+        let py = y * 16;
+        do Screen.setColor(true);
+        do Screen.drawRectangle(px + 3, py + 3, px + 12, py + 12);
+        if (~(state = 2)) {
+            do Screen.setColor(false);
+            do Screen.drawRectangle(px + 6, py + 6, px + 9, py + 9);
+            do Screen.setColor(true);
+        }
+        // facing mark (2 pixels wide, outside the square)
+        if (dir = 0) {
+            do Screen.drawLine(px + 7, py, px + 7, py + 2);
+            do Screen.drawLine(px + 8, py, px + 8, py + 2);
+        }
+        if (dir = 2) {
+            do Screen.drawLine(px + 7, py + 13, px + 7, py + 15);
+            do Screen.drawLine(px + 8, py + 13, px + 8, py + 15);
+        }
+        if (dir = 3) {
+            do Screen.drawLine(px, py + 7, px + 2, py + 7);
+            do Screen.drawLine(px, py + 8, px + 2, py + 8);
+        }
+        if (dir = 1) {
+            do Screen.drawLine(px + 13, py + 7, px + 15, py + 7);
+            do Screen.drawLine(px + 13, py + 8, px + 15, py + 8);
+        }
+        return;
+    }
+
+    /** Paints the guard's tile white. Call map.drawTile(getX(), getY()) after. */
+    method void erase() {
+        do eraseTile(x, y);
+        return;
+    }
+
+    method void dispose() {
+        do wpx.dispose();
+        do wpy.dispose();
+        do trail.dispose();
+        do Memory.deAlloc(this);
+        return;
+    }
+}
