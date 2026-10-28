@@ -1,0 +1,123 @@
+/**
+ * Camera (Member C)
+ * Stationary, sweeps between direction a and direction b (switches every
+ * 8 ticks), sees up to 5 tiles in a straight line (walls block sight).
+ * Directions: 0 up, 1 right, 2 down, 3 left. Positions in tile units.
+ * Drawn as a solid circle with a short pointer showing where it looks.
+ * Allocates nothing after construction.
+ */
+class Camera {
+    field int x, y, dirA, dirB, dir, prevDir, timer, alert;
+
+    constructor Camera new(int ax, int ay, int a, int b) {
+        let x = ax;
+        let y = ay;
+        let dirA = a;
+        let dirB = b;
+        let dir = a;
+        let prevDir = -1;
+        let timer = 0;
+        let alert = 0;
+        return this;
+    }
+
+    method int getX() { return x; }
+    method int getY() { return y; }
+    method int getDir() { return dir; }
+    method int getAlert() { return alert; }
+
+    method int stepDX(int d) {
+        if (d = 1) { return 1; }
+        if (d = 3) { return -1; }
+        return 0;
+    }
+
+    method int stepDY(int d) {
+        if (d = 0) { return -1; }
+        if (d = 2) { return 1; }
+        return 0;
+    }
+
+    /** Call once per tick: sweeps between the two directions. */
+    method void update() {
+        let timer = timer + 1;
+        if (timer > 7) {
+            let timer = 0;
+            let prevDir = dir;
+            if (dir = dirA) { let dir = dirB; } else { let dir = dirA; }
+        }
+        return;
+    }
+
+    /** True if the player is on the camera tile or within 5 tiles straight
+        ahead with no sight-blocking tile in between. (Does not know about
+        shadow: use watch() which takes the hidden flag.) */
+    method boolean canSee(int px, int py, Map map) {
+        var int d, dxv, dyv, tx, ty;
+        if ((px = x) & (py = y)) { return true; }
+        let dxv = stepDX(dir);
+        let dyv = stepDY(dir);
+        let d = 1;
+        while (d < 6) {
+            let tx = x + (dxv * d);
+            let ty = y + (dyv * d);
+            if (map.blocksSight(tx, ty)) { return false; }
+            if ((tx = px) & (ty = py)) { return true; }
+            let d = d + 1;
+        }
+        return false;
+    }
+
+    /** Alert meter (new, optional). Call once per tick after update().
+        Returns true if the camera sees the player right now.
+        Meter rises 1 per tick in view and falls 1 per tick out of view. */
+    method boolean watch(int px, int py, boolean hidden, Map map) {
+        var boolean seen;
+        let seen = (~hidden) & canSee(px, py, map);
+        if (seen) {
+            if (alert < 3) { let alert = alert + 1; }
+        } else {
+            if (alert > 0) { let alert = alert - 1; }
+        }
+        return seen;
+    }
+
+    /** True when the meter is full (player in view for 3 ticks). */
+    method boolean caught() {
+        return ~(alert < 3);
+    }
+
+    method void drawPointer(int d, boolean color) {
+        var int px, py;
+        let px = x * 16;
+        let py = y * 16;
+        do Screen.setColor(color);
+        if (d = 0) { do Screen.drawLine(px + 8, py + 8, px + 8, py); }
+        if (d = 1) { do Screen.drawLine(px + 8, py + 8, px + 15, py + 8); }
+        if (d = 2) { do Screen.drawLine(px + 8, py + 8, px + 8, py + 15); }
+        if (d = 3) { do Screen.drawLine(px + 8, py + 8, px, py + 8); }
+        do Screen.setColor(true);
+        return;
+    }
+
+    /** Solid circle at the tile centre plus a pointer in the current
+        direction. Safe to call every tick or only after the level draws. */
+    method void draw() {
+        var int px, py;
+        let px = x * 16;
+        let py = y * 16;
+        if (prevDir > -1) {
+            do drawPointer(prevDir, false);
+            let prevDir = -1;
+        }
+        do Screen.setColor(true);
+        do Screen.drawCircle(px + 8, py + 8, 4);
+        do drawPointer(dir, true);
+        return;
+    }
+
+    method void dispose() {
+        do Memory.deAlloc(this);
+        return;
+    }
+}
